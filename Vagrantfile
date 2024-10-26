@@ -1,5 +1,4 @@
 Vagrant.configure("2") do |config|
-
   # Configuración global
   config.vm.box = "ubuntu/bionic64"
 
@@ -13,18 +12,28 @@ Vagrant.configure("2") do |config|
       # Asignar IP estática dentro del rango 192.168.100.x
       node.vm.network "private_network", ip: "192.168.100.#{10 + i}"
 
-      # Provisión del sistema: instalación de Consul y HAProxy en el nodo 1
+      # Asignación de memoria y CPU
+      node.vm.provider "virtualbox" do |vb|
+        vb.memory = 512
+        vb.cpus = 1
+      end
+
+      # Provisión del sistema
+      node.vm.provision "shell", inline: <<-SHELL
+        # Actualizar e instalar herramientas necesarias
+        sudo apt-get update
+        sudo apt-get install -y unzip curl
+
+        # Instalar Consul
+        wget https://releases.hashicorp.com/consul/1.16.0/consul_1.16.0_linux_amd64.zip
+        unzip consul_1.16.0_linux_amd64.zip
+        sudo mv consul /usr/local/bin/
+        sudo mkdir -p /etc/consul.d
+      SHELL
+
       if i == 1
-        # Nodo de Consul y HAProxy (balanceador de carga)
+        # Configuración y provisión específicas para el nodo 1
         node.vm.provision "shell", inline: <<-SHELL
-          # Instalar Consul
-          sudo apt-get update
-          sudo apt-get install -y unzip
-          wget https://releases.hashicorp.com/consul/1.16.0/consul_1.16.0_linux_amd64.zip
-          unzip consul_1.16.0_linux_amd64.zip
-          sudo mv consul /usr/local/bin/
-          sudo mkdir -p /etc/consul.d
-          
           # Instalar HAProxy
           sudo apt-get install -y haproxy
 
@@ -60,8 +69,8 @@ Vagrant.configure("2") do |config|
               server consul_node_2 192.168.100.12:3002 check
               server consul_node_3 192.168.100.13:3003 check
 
-	  listen stats
-    	      bind *:8404
+          listen stats
+              bind *:8404
               mode http
               stats enable
               stats uri /stats
@@ -73,7 +82,9 @@ Vagrant.configure("2") do |config|
           sudo systemctl restart haproxy
         SHELL
       else
-          # Configurar Consul para el nodo #{i}
+        # Configuración de Consul y Node.js para los nodos 2 y 3
+        node.vm.provision "shell", inline: <<-SHELL
+          # Configurar Consul en modo servidor
           sudo tee /etc/consul.d/consul.json > /dev/null <<-EOF
           {
             "server": true,
@@ -87,55 +98,33 @@ Vagrant.configure("2") do |config|
           }
           EOF
 
-          # Iniciar Consul
-          consul agent -server -config-dir /etc/consul.d > /vagrant/consul_#{i}.log 2>&1 &
+          # Iniciar Consul en segundo plano
+          nohup consul agent -server -config-dir /etc/consul.d > /vagrant/consul_#{i}.log 2>&1 &
 
-
-          # Nodos de Consul y Node.js
-          node.vm.provision "shell", inline: <<-SHELL
-          sudo apt-get update
-          sudo apt-get install -y unzip
-          wget https://releases.hashicorp.com/consul/1.16.0/consul_1.16.0_linux_amd64.zip
-          unzip consul_1.16.0_linux_amd64.zip
-          sudo mv consul /usr/local/bin/
-          sudo mkdir -p /etc/consul.d
-          
-          # Instalar Node.js
+          # Instalar Node.js y configurar servidor básico
           sudo apt-get install -y nodejs npm
-
-          # Crear un directorio para la aplicación Node.js
           mkdir ~/node_app
           cd ~/node_app
 
-          # Crear un archivo de servidor básico
+          # Crear archivo de servidor básico en Node.js
           tee server.js > /dev/null <<-EOF
           const http = require('http');
-
           const hostname = '0.0.0.0';
           const port = 3001 + #{i};
-
           const server = http.createServer((req, res) => {
             res.statusCode = 200;
             res.setHeader('Content-Type', 'text/plain');
             res.end('Hello World from Node.js on consul_node_#{i}!\n');
           });
-
           server.listen(port, hostname, () => {
             console.log('Server running at http://' + hostname + ':' + port + '/');
           });
           EOF
 
-          # Ejecutar el servidor
+          # Ejecutar servidor Node.js en segundo plano
           nohup node server.js > server.log 2>&1 &
         SHELL
       end
-
-      # Asignación de memoria y CPU
-      node.vm.provider "virtualbox" do |vb|
-        vb.memory = 512
-        vb.cpus = 1
-      end
     end
   end
-
 end
