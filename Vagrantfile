@@ -73,6 +73,24 @@ Vagrant.configure("2") do |config|
           sudo systemctl restart haproxy
         SHELL
       else
+          # Configurar Consul para el nodo #{i}
+          sudo tee /etc/consul.d/consul.json > /dev/null <<-EOF
+          {
+            "server": true,
+            "bootstrap_expect": 3,
+            "data_dir": "/tmp/consul",
+            "client_addr": "0.0.0.0",
+            "bind_addr": "192.168.100.#{10 + i}",
+            "advertise_addr": "192.168.100.#{10 + i}",
+            "retry_join": ["192.168.100.11", "192.168.100.12", "192.168.100.13"],
+            "ui": true
+          }
+          EOF
+
+          # Iniciar Consul
+          consul agent -server -config-dir /etc/consul.d > /vagrant/consul_#{i}.log 2>&1 &
+
+
           # Nodos de Consul y Node.js
           node.vm.provision "shell", inline: <<-SHELL
           sudo apt-get update
